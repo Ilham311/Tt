@@ -1,0 +1,95 @@
+# SandboxID — carriers.tsv
+# Format: NAME	MCC	MNC	ISO	CARRIER_ID
+# Lines starting with # are comments. Maintained in sync with config.hpp ID_CARRIERS[].
+#
+# == Indonesia ==
+Telkomsel	510	10	id	787
+Indosat Ooredoo Hutchison	510	21	id	789
+XL Axiata	510	11	id	788
+Axis	510	08	id	788
+Tri (3)	510	89	id
+Smartfren	510	09	id
+by.U	510	27	id
+#
+# == Malaysia ==
+Maxis	502	12	my	680
+Celcom	502	13	my	681
+Digi	502	16	my	682
+U Mobile	502	18	my
+unifi	502	153	my
+#
+# == Thailand ==
+AIS	520	01	th	706
+DTAC	520	05	th	707
+Truemove H	520	04	th	708
+NT Mobile	520	15	th
+#
+# == Philippines ==
+Globe Telecom	515	02	ph	696
+Smart	515	03	ph	697
+DITO	515	66	ph
+TNT	515	02	ph	696
+TM	515	03	ph	697
+#
+# == Vietnam ==
+Viettel	452	04	vn	740
+MobiFone	452	01	vn	741
+Vinaphone	452	02	vn	742
+Vietnamobile	452	05	vn
+GMobile	452	07	vn
+#
+# == India ==
+Jio	405	840	in	1539
+Airtel	404	10	in	771
+Vi (Vodafone Idea)	404	20	in	772
+BSNL	404	59	in	773
+#
+# == Singapore ==
+Singtel	525	01	sg	689
+StarHub	525	05	sg	690
+M1	525	03	sg	691
+Simba (MVNO)	525	12	sg
+#
+# == Japan ==
+NTT Docomo	440	10	jp	725
+au (KDDI)	440	50	jp	726
+SoftBank	440	20	jp	727
+Rakuten Mobile	440	11	jp
+#
+# == South Korea ==
+SK Telecom	450	05	kr	734
+KT	450	08	kr	735
+LG U+	450	06	kr	736
+#
+# == United States ==
+T-Mobile	310	260	us	1
+AT&T	310	410	us	3
+Verizon	311	480	us	2
+US Cellular	311	580	us	5
+#
+# == United Kingdom ==
+EE	234	30	gb	628
+Vodafone UK	234	15	gb	629
+Three UK	234	20	gb	630
+O2 UK	234	10	gb	631
+#
+# == Brazil ==
+Claro BR	724	05	br	774
+Vivo BR	724	06	br	775
+TIM BR	724	04	br	776
+Oi	724	31	br	777
+#
+# == Turkey ==
+Turkcell	286	01	tr	768
+Vodafone TR	286	02	tr	769
+Turk Telekom	286	03	tr	770
+#
+# == Germany ==
+Telekom DE	262	01	de	622
+Vodafone DE	262	02	de	623
+o2 DE	262	07	de	624
+#
+# == Australia ==
+Telstra	505	01	au	638
+Optus	505	02	au	639
+Vodafone AU	505	03	au	640
