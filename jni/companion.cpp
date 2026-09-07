@@ -18,6 +18,7 @@
 #include <string>
 #include <vector>
 #include <array>
+#include <unordered_set>
 #include <fstream>
 #include <sstream>
 #include <thread>
@@ -49,28 +50,35 @@ static constexpr struct timeval SBX_IO_TIMEOUT = {2, 0};
 // Payload tiap perintah tetap dibaca dengan SBX_IO_TIMEOUT (2s) yang ketat.
 static constexpr struct timeval SBX_IDLE_TIMEOUT = {30, 0};
 
-static void watch_target_death(uint32_t pid, int client_fd);
-
-static std::vector<std::string> g_targets;
+static std::unordered_set<std::string> g_targets;
 static time_t                   g_targets_mtime_sec = 0;
 static long                     g_targets_mtime_nsec = 0;
 static std::recursive_mutex     g_targets_mtx;
 
 static void reload_targets_if_changed() {
     std::lock_guard<std::recursive_mutex> lock(g_targets_mtx);
+
+    // H10: open-then-fstat eliminates TOCTOU between stat and open
+    int fd = ::open(sandboxid::TARGET_FILE, O_RDONLY | O_CLOEXEC);
+    if (fd < 0) return;
+
     struct stat st{};
-    bool have = (::stat(sandboxid::TARGET_FILE, &st) == 0);
-    if (!have) return;
+    if (::fstat(fd, &st) != 0) { ::close(fd); return; }
 
     if (!g_targets.empty() &&
         st.st_mtim.tv_sec == g_targets_mtime_sec &&
-        st.st_mtim.tv_nsec == g_targets_mtime_nsec)
+        st.st_mtim.tv_nsec == g_targets_mtime_nsec) {
+        ::close(fd);
         return;
+    }
 
-    std::ifstream f(sandboxid::TARGET_FILE);
-    std::vector<std::string> next;
-    std::string line;
-    while (std::getline(f, line)) {
+    FILE* fp = ::fdopen(fd, "r");
+    if (!fp) { ::close(fd); return; }
+
+    std::unordered_set<std::string> next;
+    char buf[512];
+    while (::fgets(buf, sizeof(buf), fp)) {
+        std::string line(buf);
         size_t hash = line.find('#');
         if (hash != std::string::npos) line.erase(hash);
         while (!line.empty() &&
@@ -81,10 +89,11 @@ static void reload_targets_if_changed() {
         if (s == std::string::npos) continue;
         line = line.substr(s);
         if (line.empty()) continue;
-        next.push_back(line);
+        next.insert(std::move(line));
     }
-    if (next.empty()) {
+    ::fclose(fp); // closes fd too
 
+    if (next.empty()) {
         LOGW("target.txt has 0 valid entries; keeping previous list (%zu pkgs)", g_targets.size());
     } else {
         g_targets = std::move(next);
@@ -102,8 +111,7 @@ static bool is_target(const std::string& pkg) {
     if (pkg.empty()) return false;
     std::lock_guard<std::recursive_mutex> lock(g_targets_mtx);
     reload_targets_if_changed();
-    for (const auto& t : g_targets) if (t == pkg) return true;
-    return false;
+    return g_targets.count(pkg) != 0;
 }
 
 static std::string read_file(const char* p) {
@@ -221,8 +229,6 @@ static uint32_t do_mounts_via_fork(uint32_t target_pid, int client) {
     }
     LOGI("mount pid=%u: %u ok, %u fail, %u skip (skip_src=%u skip_dst=%u) [%s]",
          target_pid, r.ok, r.fail, r.skip, r.skip_src, r.skip_dst, SBX_VARIANT_TAG);
-
-    watch_target_death(target_pid, client);
 
     return r.ok;
 }
@@ -395,29 +401,6 @@ static uint32_t do_hide_via_fork(uint32_t target_pid) {
          target_pid, r.detached, r.fail, r.candidates, SBX_VARIANT_TAG);
 
     return r.detached;
-}
-
-static void watch_target_death(uint32_t pid, int client_fd) {
-    pid_t f1 = ::fork();
-    if (f1 < 0) return;
-    if (f1 > 0) {
-
-        ::waitpid(f1, nullptr, 0);
-        return;
-    }
-
-    if (::fork() > 0) ::_exit(0);
-
-    ::close(client_fd);
-
-    const struct timespec nap = { 0, 500L * 1000L * 1000L };
-    for (int i = 0; i < 3600; ++i) {
-        ::nanosleep(&nap, nullptr);
-        if (::kill((pid_t)pid, 0) == 0) continue;
-        if (errno != ESRCH) continue;
-        ::_exit(0);
-    }
-    ::_exit(0);
 }
 
 static bool try_seed_ondemand() {

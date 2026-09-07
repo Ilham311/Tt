@@ -276,4 +276,38 @@ _nnr="nonaktif"; [ -f "$MODDIR/no_native_read" ] && _nnr="AKTIF (native-read dim
 emit hooks INFO "redirect baca /proc,/sys (boot_id, MAC, /proc/version, meminfo, cpuinfo, enforce): kill-switch no_native_read=$_nnr"
 emit hooks INFO "hook properti L2/L9 + bind build.prop: hanya di app target — verifikasi dengan app detektor"
 
+_l3="nonaktif"
+if [ -f "$MODDIR/enable_l3" ] || [ -f "$MODDIR/l3_status" ]; then
+    _l3st="$(cat "$MODDIR/l3_status" 2>/dev/null)"
+    case "$_l3st" in
+        active*) _l3="aktif ($_l3st)" ;;
+        skipped*|blocked*) _l3="dilewati ($_l3st)" ;;
+        *) _l3="enable_l3 ada, status: ${_l3st:-tidak diketahui}" ;;
+    esac
+fi
+emit hooks INFO "L3 (LSPlant Java method hook): $_l3 — verifikasi dengan VD-Infos/YASNAC di app target"
+
+# M05: L3/LSPlant artifact verification
+_l3_lib=""
+for _abi in arm64-v8a armeabi-v7a x86_64 x86; do
+    [ -f "$MODDIR/lib/$_abi/liblsplant.so" ] && { _l3_lib="$_abi"; break; }
+done
+if [ -n "$_l3_lib" ]; then
+    emit hooks PASS "LSPlant library ditemukan (ABI: $_l3_lib)"
+else
+    if [ -f "$MODDIR/enable_l3" ]; then
+        emit hooks WARN "enable_l3 ada tapi liblsplant.so tidak ditemukan — L3 hook tidak akan bekerja"
+    else
+        emit hooks INFO "LSPlant library tidak ada (L3 nonaktif, wajar)"
+    fi
+fi
+if [ -f "$MODDIR/enable_l3" ]; then
+    _hookcount="$(cat "$MODDIR/l3_hook_count" 2>/dev/null)"
+    if [ -n "$_hookcount" ] && [ "$_hookcount" -gt 0 ] 2>/dev/null; then
+        emit hooks PASS "L3 hook count: $_hookcount method(s) hooked"
+    elif [ -n "$_l3st" ] && echo "$_l3st" | grep -q "active"; then
+        emit hooks WARN "L3 aktif tapi hook_count tidak terbaca (periksa l3_hook_count)"
+    fi
+fi
+
 printf 'SELFTEST SUMMARY pass=%d warn=%d fail=%d info=%d\n' "$PASS" "$WARN" "$FAIL" "$INFO"

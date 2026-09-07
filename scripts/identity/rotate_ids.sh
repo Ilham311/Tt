@@ -218,10 +218,10 @@ rotate_bluetooth_mac() {
         mode=$(stat -c '%a' "$btcfg" 2>/dev/null)
         cp -f "$btcfg" "$BACKUP_DIR_ROOT/bt_config_addr.$(date +%s).conf" 2>/dev/null
         if grep -q '^Address = ' "$btcfg" 2>/dev/null; then
-            awk -v m="$newbt" '/^Address = / { print "Address = " m; next } { print }' \
+            NEWBT="$newbt" awk '/^Address = / { print "Address = " ENVIRON["NEWBT"]; next } { print }' \
                 "$btcfg" > "${btcfg}.tmp" 2>/dev/null
         else
-            awk -v m="$newbt" 'BEGIN{d=0} /^\[Adapter\]/ && !d { print; print "Address = " m; d=1; next } { print } END { if (!d) { print "[Adapter]"; print "Address = " m } }' \
+            NEWBT="$newbt" awk 'BEGIN{d=0} /^\[Adapter\]/ && !d { print; print "Address = " ENVIRON["NEWBT"]; d=1; next } { print } END { if (!d) { print "[Adapter]"; print "Address = " ENVIRON["NEWBT"] } }' \
                 "$btcfg" > "${btcfg}.tmp" 2>/dev/null
         fi
         if [ -s "${btcfg}.tmp" ] && grep -q '^Address = ' "${btcfg}.tmp" 2>/dev/null \
@@ -318,7 +318,7 @@ sync_device_name() {
         owner=$(stat -c '%U:%G' "$btcfg" 2>/dev/null)
         mode=$(stat -c '%a' "$btcfg" 2>/dev/null)
         cp -f "$btcfg" "$BACKUP_DIR_ROOT/bt_config_name.$(date +%s).conf" 2>/dev/null
-        awk -v n="$NEW_NAME" '/^Name = / { print "Name = " n; next } { print }' \
+        NEWNAME="$NEW_NAME" awk '/^Name = / { print "Name = " ENVIRON["NEWNAME"]; next } { print }' \
             "$btcfg" > "${btcfg}.tmp" 2>/dev/null
         if [ -s "${btcfg}.tmp" ] && mv "${btcfg}.tmp" "$btcfg" 2>/dev/null; then
             [ -n "$owner" ] && chown "$owner" "$btcfg" 2>/dev/null

@@ -83,12 +83,45 @@ inline constexpr size_t VAL_DEFAULTS_N = sizeof(VAL_DEFAULTS) / sizeof(VAL_DEFAU
 
 struct SimCarrier { const char* alpha; const char* numeric; const char* iso; const char* carrier_id; };
 inline constexpr SimCarrier ID_CARRIERS[] = {
+    // Indonesia
     {"Telkomsel", "51010", "id", "787"},
     {"Indosat",   "51021", "id", "789"},
     {"XL",        "51011", "id", "788"},
     {"Axis",      "51008", "id", "788"},
     {"Tri",       "51089", "id", ""},
     {"Smartfren", "51009", "id", ""},
+    // US
+    {"T-Mobile",  "310260", "us", "1"},
+    {"AT&T",      "310410", "us", "3"},
+    {"Verizon",   "311480", "us", "4"},
+    // India
+    {"Jio",       "40588", "in", ""},
+    {"Airtel",    "40410", "in", ""},
+    {"Vi",        "40411", "in", ""},
+    // EU
+    {"Vodafone",  "26202", "de", ""},
+    {"T-Mobile DE","26201","de", ""},
+    {"O2 DE",     "26207", "de", ""},
+    {"EE",        "23430", "gb", ""},
+    {"Three UK",  "23420", "gb", ""},
+    // Australia
+    {"Telstra",   "50501", "au", ""},
+    {"Optus",     "50502", "au", ""},
+    // Japan
+    {"NTT Docomo","44010", "jp", ""},
+    {"SoftBank",  "44020", "jp", ""},
+    // Brazil
+    {"Claro BR",  "72405", "br", ""},
+    {"Vivo BR",   "72406", "br", ""},
+    // Thailand
+    {"AIS",       "52001", "th", ""},
+    {"TrueMove",  "52004", "th", ""},
+    // Malaysia
+    {"Maxis",     "50212", "my", ""},
+    {"Celcom",    "50213", "my", ""},
+    // Philippines
+    {"Globe",     "51502", "ph", ""},
+    {"Smart",     "51503", "ph", ""},
 };
 inline constexpr size_t ID_CARRIERS_N = sizeof(ID_CARRIERS) / sizeof(ID_CARRIERS[0]);
 
@@ -144,6 +177,27 @@ inline bool write_full(int fd, const void* buf, size_t n) {
         return false;
     }
     return true;
+}
+
+template<typename Container>
+inline void parse_target_lines(const char* data, size_t len, Container& out) {
+    const char* p = data;
+    const char* end = data + len;
+    while (p < end) {
+        const char* nl = static_cast<const char*>(memchr(p, '\n', end - p));
+        if (!nl) nl = end;
+        size_t ll = nl - p;
+        if (ll > 0 && p[ll - 1] == '\r') --ll;
+        const char* hash = static_cast<const char*>(memchr(p, '#', ll));
+        if (hash) ll = hash - p;
+        while (ll > 0 && (p[ll-1] == ' ' || p[ll-1] == '\t')) --ll;
+        size_t s = 0;
+        while (s < ll && (p[s] == ' ' || p[s] == '\t')) ++s;
+        if (s < ll) {
+            out.insert(out.end(), std::string(p + s, ll - s));
+        }
+        p = nl + 1;
+    }
 }
 
 }

@@ -33,21 +33,9 @@ static const char* CARRIER_CONF   = sandboxid::CARRIER_CONF;
 
 static std::vector<std::string> load_targets() {
     std::vector<std::string> out;
-    std::ifstream f(TARGET_FILE);
-    std::string line;
-    while (std::getline(f, line)) {
-        size_t hash = line.find('#');
-        if (hash != std::string::npos) line.erase(hash);
-        while (!line.empty() &&
-               (line.back() == '\r' || line.back() == ' ' ||
-                line.back() == '\t' || line.back() == '\n'))
-            line.pop_back();
-        size_t s = line.find_first_not_of(" \t");
-        if (s == std::string::npos) continue;
-        line = line.substr(s);
-        if (line.empty()) continue;
-        out.push_back(line);
-    }
+    std::string data = read_file(TARGET_FILE);
+    if (!data.empty())
+        sandboxid::parse_target_lines(data.data(), data.size(), out);
     return out;
 }
 
@@ -701,38 +689,80 @@ static void apply_native(const Identity& id) {
 
     bool have_bundled = (::access(RESETPROP, X_OK) == 0);
     {
-        int applied = 0, failed = 0;
+        // H07: batch all resetprop calls into a single fork+shell instead of 70 fork+exec
+        std::string script = "#!/system/bin/sh\nA=0;F=0\n";
+        auto shq = [](const std::string& s) -> std::string {
+            std::string o = "'";
+            for (char c : s) {
+                if (c == '\'') o += "'\\''";
+                else o += c;
+            }
+            o += "'";
+            return o;
+        };
+        std::string rp_bin;
+        if (have_bundled) {
+            rp_bin = RESETPROP;
+        } else {
+            rp_bin = "resetprop-rs";
+            script += "command -v resetprop-rs >/dev/null 2>&1 || ";
+            script += "{ command -v resetprop >/dev/null 2>&1 && rp=resetprop; }\n";
+        }
+
+        int prop_count = 0;
         for (const auto& r : rp) {
             if (r.val.empty() && !r.del_if_empty) continue;
-            int rc;
+            prop_count++;
             if (r.val.empty()) {
-
-                if (have_bundled) {
-                    rc = run_bin(RESETPROP, {"resetprop-rs", "--delete", r.key});
-                } else {
-                    rc = run_bin_path("resetprop", {"resetprop", "--delete", r.key});
-                    if (rc != 0)
-                        rc = run_bin_path("resetprop-rs", {"resetprop-rs", "--delete", r.key});
-                }
-            } else if (have_bundled) {
-                rc = run_bin(RESETPROP, {"resetprop-rs", "-n", r.key, r.val.c_str()});
+                script += shq(rp_bin) + " --delete " + shq(r.key) + " && A=$((A+1)) || F=$((F+1))\n";
             } else {
-                rc = run_bin_path("resetprop", {"resetprop", "-n", r.key, r.val.c_str()});
-                if (rc != 0)
-                    rc = run_bin_path("resetprop-rs", {"resetprop-rs", "-n", r.key, r.val.c_str()});
-            }
-            if (rc == 0) {
-                applied++;
-            } else {
-                failed++;
-                fprintf(stderr, "! resetprop gagal (exit!=0): %s\n", r.key);
+                script += shq(rp_bin) + " -n " + shq(r.key) + " " + shq(r.val) + " && A=$((A+1)) || F=$((F+1))\n";
             }
         }
-        printf("  Native prop: %d ok, %d gagal%s\n", applied, failed,
-               have_bundled ? "" : " [fallback PATH]");
-        if (applied == 0 && failed > 0)
-            fprintf(stderr, "! SEMUA resetprop gagal%s — cek ketersediaan resetprop / resetprop-rs\n",
-                    have_bundled ? "" : " (bundled absent + PATH fallback gagal)");
+        script += "printf '%d %d' \"$A\" \"$F\"\n";
+
+        if (prop_count > 0) {
+            std::string tmp = std::string(MODDIR) + "/.apply_props.sh";
+            {
+                int fd = ::open(tmp.c_str(), O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0700);
+                if (fd >= 0) {
+                    ::write(fd, script.data(), script.size());
+                    ::close(fd);
+                }
+            }
+            int pipefd[2];
+            bool piped = (::pipe(pipefd) == 0);
+            pid_t pid = ::fork();
+            if (pid == 0) {
+                if (piped) {
+                    ::close(pipefd[0]);
+                    ::dup2(pipefd[1], STDOUT_FILENO);
+                    ::close(pipefd[1]);
+                }
+                ::execl("/system/bin/sh", "sh", tmp.c_str(), nullptr);
+                ::_exit(127);
+            }
+            int applied = 0, failed = 0;
+            if (pid > 0) {
+                if (piped) ::close(pipefd[1]);
+                char buf[64] = {};
+                if (piped) {
+                    ssize_t n = ::read(pipefd[0], buf, sizeof(buf) - 1);
+                    if (n > 0) buf[n] = '\0';
+                    ::close(pipefd[0]);
+                }
+                ::waitpid(pid, nullptr, 0);
+                ::sscanf(buf, "%d %d", &applied, &failed);
+            } else {
+                if (piped) { ::close(pipefd[0]); ::close(pipefd[1]); }
+            }
+            ::unlink(tmp.c_str());
+            printf("  Native prop: %d ok, %d gagal%s\n", applied, failed,
+                   have_bundled ? "" : " [fallback PATH]");
+            if (applied == 0 && failed > 0)
+                fprintf(stderr, "! SEMUA resetprop gagal%s — cek ketersediaan resetprop / resetprop-rs\n",
+                        have_bundled ? "" : " (bundled absent + PATH fallback gagal)");
+        }
     }
 
     std::string aid = get("ANDROID_ID");

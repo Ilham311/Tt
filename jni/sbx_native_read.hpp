@@ -270,13 +270,15 @@ inline std::string synth_proc_version(const std::string& release,
 
     std::string bhost = host.empty() ? std::string("abfarm-release-01") : host;
 
-    char out[512];
-    std::snprintf(out, sizeof(out),
+    char out[1024];
+    int n = std::snprintf(out, sizeof(out),
         "Linux version %s.%u-android%d-%u-g%s-ab%s (kleaf@%s) "
         "(Android (based on r522817) clang version %s, LLD 18.0.1) "
         "#1 SMP PREEMPT Mon Jan 1 00:00:00 UTC 2024",
         kbase, ksub, aver, krev, ghash, ab.c_str(), bhost.c_str(), clang);
-    return std::string(out);
+    if (n < 0) n = 0;
+    if (static_cast<size_t>(n) >= sizeof(out)) n = static_cast<int>(sizeof(out) - 1);
+    return std::string(out, static_cast<size_t>(n));
 }
 
 inline int pixel_ram_gb(const std::string& model) {
@@ -395,10 +397,20 @@ inline std::string patch_stat_btime(const std::string& real, long long off_sec) 
 enum CpuAction { CPU_NONE = 0, CPU_QUALCOMM = 1, CPU_MTK = 2, CPU_STRIP = 3 };
 
 inline bool ci_contains(const std::string& hay, const char* needle) {
-    std::string h = hay, n = needle;
-    for (char& c : h) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-    for (char& c : n) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-    return h.find(n) != std::string::npos;
+    size_t nl = std::strlen(needle);
+    if (nl == 0) return true;
+    if (hay.size() < nl) return false;
+    for (size_t i = 0; i + nl <= hay.size(); ++i) {
+        size_t j = 0;
+        while (j < nl) {
+            unsigned char a = static_cast<unsigned char>(hay[i + j]);
+            unsigned char b = static_cast<unsigned char>(needle[j]);
+            if (std::tolower(a) != std::tolower(b)) break;
+            ++j;
+        }
+        if (j == nl) return true;
+    }
+    return false;
 }
 
 inline bool starts_with(const std::string& s, const char* p) {
@@ -499,52 +511,56 @@ inline bool applog_xml_is_synthable(const char* path) {
 
 inline Kind classify(const char* path) {
     if (!path) return NONE;
-    if (std::strcmp(path, "/proc/sys/kernel/random/boot_id") == 0) return BOOTID;
-    if (std::strcmp(path, "/proc/version") == 0) return VERSION;
-    if (std::strcmp(path, "/proc/meminfo") == 0) return MEMINFO;
-    if (std::strcmp(path, "/proc/cpuinfo") == 0) return CPUINFO;
-    if (std::strcmp(path, "/proc/uptime") == 0) return UPTIME;
-    if (std::strcmp(path, "/proc/stat") == 0) return STAT;
+    const size_t pl = std::strlen(path);
 
-    if (std::strcmp(path, "/sys/fs/selinux/enforce") == 0) return SELINUX_ENFORCE;
-
-    if (std::strcmp(path, "/proc/net/arp") == 0) return ARP;
-
-    static const char pfx[] = "/sys/class/net/";
-    const size_t pl = sizeof(pfx) - 1;
-    if (std::strncmp(path, pfx, pl) == 0) {
-        const char* rest = path + pl;
-        const char* slash = std::strchr(rest, '/');
-        if (slash && std::strcmp(slash, "/address") == 0) {
-            size_t iflen = static_cast<size_t>(slash - rest);
-            if ((iflen >= 4 && std::strncmp(rest, "wlan", 4) == 0) ||
-                (iflen >= 3 && std::strncmp(rest, "p2p", 3) == 0))
-                return MAC;
+    if (pl > 6 && std::memcmp(path, "/proc/", 6) == 0) {
+        const char* r = path + 6;
+        switch (*r) {
+        case 'v': if (std::strcmp(r, "version") == 0) return VERSION; break;
+        case 'm': if (std::strcmp(r, "meminfo") == 0) return MEMINFO; break;
+        case 'c': if (std::strcmp(r, "cpuinfo") == 0) return CPUINFO; break;
+        case 'u': if (std::strcmp(r, "uptime") == 0)  return UPTIME;  break;
+        case 's':
+            if (std::strcmp(r, "stat") == 0) return STAT;
+            if (std::strcmp(r, "sys/kernel/random/boot_id") == 0) return BOOTID;
+            break;
+        case 'n': if (std::strcmp(r, "net/arp") == 0) return ARP; break;
         }
+        return NONE;
     }
 
-    const size_t pl2 = std::strlen(path);
-    // ByteDance AppLog / DeviceRegister SharedPreferences yang menyimpan ID.
-    // Daftar dikurasi sinkron dengan applog_wipe() di scripts/lib/helpers.sh.
-    // patch_applog_xml hanya menulis ulang <string> yang key-nya cocok ID
-    // AppLog; key lain diteruskan apa adanya, jadi cakupan lebih luas = aman.
-    if (ends_with(path, pl2, "/shared_prefs/applog.xml") ||
-        ends_with(path, pl2, "/shared_prefs/applog_stats.xml") ||
-        ends_with(path, pl2, "/shared_prefs/snssdk_openudid.xml") ||
-        ends_with(path, pl2, "/shared_prefs/snssdk_did.xml") ||
-        ends_with(path, pl2, "/shared_prefs/bd_device_info.xml") ||
-        ends_with(path, pl2, "/shared_prefs/header_custom.xml") ||
-        ends_with(path, pl2, "/shared_prefs/ug_install_settings_pref.xml"))
+    if (pl > 5 && std::memcmp(path, "/sys/", 5) == 0) {
+        const char* r = path + 5;
+        if (std::strcmp(r, "fs/selinux/enforce") == 0) return SELINUX_ENFORCE;
+        if (pl > 15 && std::memcmp(r, "class/net/", 10) == 0) {
+            const char* iface = r + 10;
+            const char* slash = std::strchr(iface, '/');
+            if (slash && std::strcmp(slash, "/address") == 0) {
+                size_t iflen = static_cast<size_t>(slash - iface);
+                if ((iflen >= 4 && std::strncmp(iface, "wlan", 4) == 0) ||
+                    (iflen >= 3 && std::strncmp(iface, "p2p", 3) == 0))
+                    return MAC;
+            }
+        }
+        return NONE;
+    }
+
+    if (ends_with(path, pl, "/shared_prefs/applog.xml") ||
+        ends_with(path, pl, "/shared_prefs/applog_stats.xml") ||
+        ends_with(path, pl, "/shared_prefs/snssdk_openudid.xml") ||
+        ends_with(path, pl, "/shared_prefs/snssdk_did.xml") ||
+        ends_with(path, pl, "/shared_prefs/bd_device_info.xml") ||
+        ends_with(path, pl, "/shared_prefs/header_custom.xml") ||
+        ends_with(path, pl, "/shared_prefs/ug_install_settings_pref.xml"))
         return APPLOG_XML;
-    if (ends_with(path, pl2, "/files/bd_setting/device_id"))   return BD_RAW_DID;
-    if (ends_with(path, pl2, "/files/bd_setting/install_id"))  return BD_RAW_IID;
-    if (ends_with(path, pl2, "/files/bd_setting/openudid"))    return BD_RAW_OPENUDID;
-    if (ends_with(path, pl2, "/files/bd_setting/clientudid"))  return BD_RAW_CLIENTUDID;
-    if (ends_with(path, pl2, "/files/.cdid"))                  return BD_RAW_CDID;
-    // Versi SDK yang lebih baru memindah file ID mentah ke no_backup/.
-    if (ends_with(path, pl2, "/no_backup/applog_device_id.dat")) return BD_RAW_DID;
-    if (ends_with(path, pl2, "/no_backup/bd_device_id"))         return BD_RAW_DID;
-    if (ends_with(path, pl2, "/no_backup/.cdid"))                return BD_RAW_CDID;
+    if (ends_with(path, pl, "/files/bd_setting/device_id"))   return BD_RAW_DID;
+    if (ends_with(path, pl, "/files/bd_setting/install_id"))  return BD_RAW_IID;
+    if (ends_with(path, pl, "/files/bd_setting/openudid"))    return BD_RAW_OPENUDID;
+    if (ends_with(path, pl, "/files/bd_setting/clientudid"))  return BD_RAW_CLIENTUDID;
+    if (ends_with(path, pl, "/files/.cdid"))                  return BD_RAW_CDID;
+    if (ends_with(path, pl, "/no_backup/applog_device_id.dat")) return BD_RAW_DID;
+    if (ends_with(path, pl, "/no_backup/bd_device_id"))         return BD_RAW_DID;
+    if (ends_with(path, pl, "/no_backup/.cdid"))                return BD_RAW_CDID;
 
     return NONE;
 }

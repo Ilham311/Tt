@@ -1,7 +1,7 @@
 id=sandboxid
 name=SandboxID — Android device identifier privacy research module
-version=v2.1.19
-versionCode=236
+version=v2.1.30
+versionCode=237
 author=Ilham311
 description=SandboxID is an open-source Android privacy research and education module. It lets you study and experiment with the device identifier fields that apps read on your own device, and configure per-app Android Build.* properties and identity values through a userland module plus a CLI/shell layer. It runs pre-zygote, before apps launch. All behavior is user-controlled: target.txt ships empty, so no application is modified until you add it. Suitable for learning Android internals, validating app behavior against varied device configurations, and understanding identifier best practices.
 updateJson=https://github.com/Ilham311/SandboxID/releases/latest/download/update.json

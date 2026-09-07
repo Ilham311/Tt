@@ -36,6 +36,16 @@ inline std::string synth_imei(uint64_t seed) {
     static const char* TAC[] = {
         "35161511","35316010","35404911","35847313",
         "35692211","35876554","35291612","35438110",
+        "86388803","86146203","35730012","35332510",
+        "35479209","35516411","35790911","35402811",
+        "35494911","35382209","35236211","35674708",
+        "35322410","35785111","35851810","35935910",
+        "35466810","35313011","35365810","35407115",
+        "35397010","35814311","35495112","35929510",
+        "35238004","35256412","35399511","35308214",
+        "35453414","35505410","35553112","35715010",
+        "35950010","35180010","35248510","35352111",
+        "35210311","35226306","35456711","35694311",
     };
     uint64_t s = seed ^ 0x494D4549ULL;
     std::string d = TAC[sbxnr::splitmix64(s) % (sizeof(TAC)/sizeof(TAC[0]))];
@@ -54,11 +64,17 @@ inline std::string synth_imsi(uint64_t seed, std::string mccmnc) {
 }
 
 inline const char* iccid_cc_for_mcc(const std::string& mccmnc) {
-    if (mccmnc.rfind("510", 0) == 0) return "62";
-    if (mccmnc.rfind("310", 0) == 0 || mccmnc.rfind("311", 0) == 0) return "1";
-    if (mccmnc.rfind("505", 0) == 0) return "61";
-    if (mccmnc.rfind("262", 0) == 0) return "49";
-    if (mccmnc.rfind("234", 0) == 0 || mccmnc.rfind("235", 0) == 0) return "44";
+    if (mccmnc.rfind("510", 0) == 0) return "62"; // Indonesia
+    if (mccmnc.rfind("310", 0) == 0 || mccmnc.rfind("311", 0) == 0) return "1"; // US
+    if (mccmnc.rfind("505", 0) == 0) return "61"; // Australia
+    if (mccmnc.rfind("262", 0) == 0) return "49"; // Germany
+    if (mccmnc.rfind("234", 0) == 0 || mccmnc.rfind("235", 0) == 0) return "44"; // UK
+    if (mccmnc.rfind("404", 0) == 0 || mccmnc.rfind("405", 0) == 0) return "91"; // India
+    if (mccmnc.rfind("440", 0) == 0) return "81"; // Japan
+    if (mccmnc.rfind("724", 0) == 0) return "55"; // Brazil
+    if (mccmnc.rfind("520", 0) == 0) return "66"; // Thailand
+    if (mccmnc.rfind("502", 0) == 0) return "60"; // Malaysia
+    if (mccmnc.rfind("515", 0) == 0) return "63"; // Philippines
     return "01";
 }
 

@@ -197,6 +197,14 @@ backup_rotate() {
     done
 }
 
+_valid_pkg() {
+    case "$1" in
+        ''|*[!A-Za-z0-9._]*) return 1 ;;
+        .*|*/) return 1 ;;
+    esac
+    return 0
+}
+
 applog_wipe() {
     _pkg="${1:-}"
     if [ -z "$_pkg" ]; then
@@ -213,6 +221,11 @@ applog_wipe() {
             applog_wipe "$_line" && _rc=0
         done < "$_target"
         return "$_rc"
+    fi
+
+    if ! _valid_pkg "$_pkg"; then
+        log_err "applog_wipe: package name invalid ('$_pkg') — refused"
+        return 1
     fi
 
     _data_dir=""
@@ -345,6 +358,10 @@ _applog_put() {
 applog_seed() {
     _pkg="${1:-}"
     [ -n "$_pkg" ] || return 1
+    if ! _valid_pkg "$_pkg"; then
+        log_err "applog_seed: package name invalid ('$_pkg') — refused"
+        return 1
+    fi
 
     _data_dir=""
     for _base in /data/data /data/user/0; do

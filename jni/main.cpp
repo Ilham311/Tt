@@ -25,9 +25,10 @@
 #include <android/log.h>
 #include <string>
 #include <map>
+#include <unordered_map>
+#include <unordered_set>
 #include <vector>
 #include <utility>
-#include <sstream>
 #include <signal.h>
 #include <ctime>
 #include <thread>
@@ -82,15 +83,16 @@ using zygisk::ServerSpecializeArgs;
 
 static constexpr struct timeval SBX_IO_TIMEOUT = {2, 0};
 
-static std::map<std::string, std::string> g_identity;
+static std::unordered_map<std::string, std::string> g_identity;
 
 static const std::string& val(const std::string& k) {
     static const std::string empty;
     auto it = g_identity.find(k);
     if (it != g_identity.end() && !it->second.empty()) return it->second;
 
-    static const std::map<std::string, std::string> defaults = [] {
-        std::map<std::string, std::string> m;
+    static const std::unordered_map<std::string, std::string> defaults = [] {
+        std::unordered_map<std::string, std::string> m;
+        m.reserve(sandboxid::VAL_DEFAULTS_N);
         for (size_t i = 0; i < sandboxid::VAL_DEFAULTS_N; ++i)
             m.emplace(sandboxid::VAL_DEFAULTS[i].k, sandboxid::VAL_DEFAULTS[i].v);
         return m;
@@ -236,6 +238,17 @@ static const std::map<std::string, std::string>& prop_to_identity_map() {
     return m;
 }
 
+static const std::unordered_map<std::string, std::string>& static_prop_defaults_map() {
+    static const std::unordered_map<std::string, std::string> m = [] {
+        std::unordered_map<std::string, std::string> t;
+        t.reserve(sandboxid::STATIC_PROP_DEFAULTS_N);
+        for (size_t i = 0; i < sandboxid::STATIC_PROP_DEFAULTS_N; ++i)
+            t.emplace(sandboxid::STATIC_PROP_DEFAULTS[i].k, sandboxid::STATIC_PROP_DEFAULTS[i].v);
+        return t;
+    }();
+    return m;
+}
+
 static bool spoof_prop_value(const std::string& k, std::string& out) {
     const auto& map = prop_to_identity_map();
     auto it = map.find(k);
@@ -243,12 +256,9 @@ static bool spoof_prop_value(const std::string& k, std::string& out) {
         const std::string& v = val(it->second);
         if (!v.empty()) { out = v; return true; }
     }
-    for (size_t i = 0; i < sandboxid::STATIC_PROP_DEFAULTS_N; ++i) {
-        if (k == sandboxid::STATIC_PROP_DEFAULTS[i].k) {
-            out = sandboxid::STATIC_PROP_DEFAULTS[i].v;
-            return true;
-        }
-    }
+    const auto& smap = static_prop_defaults_map();
+    auto sit = smap.find(k);
+    if (sit != smap.end()) { out = sit->second; return true; }
     return false;
 }
 
@@ -268,7 +278,9 @@ static jstring hook_prop_get(JNIEnv* env, jclass clazz, jstring j_key, jstring j
     std::string v;
     if (spoof_prop_value(k, v)) {
         LOGD("L2 SPOOF '%s' -> '%s'", k.c_str(), v.c_str());
-        return env->NewStringUTF(v.c_str());
+        jstring js = env->NewStringUTF(v.c_str());
+        if (!js) { if (env->ExceptionCheck()) env->ExceptionClear(); return j_def; }
+        return js;
     }
 
     if (sbx_prop_hidden(k.c_str())) {
@@ -279,7 +291,11 @@ static jstring hook_prop_get(JNIEnv* env, jclass clazz, jstring j_key, jstring j
     if (orig_native_get) return orig_native_get(env, clazz, j_key, j_def);
 
     char buf[PROP_VALUE_MAX] = {0};
-    if (__system_property_get(k.c_str(), buf) > 0) return env->NewStringUTF(buf);
+    if (__system_property_get(k.c_str(), buf) > 0) {
+        jstring js = env->NewStringUTF(buf);
+        if (!js) { if (env->ExceptionCheck()) env->ExceptionClear(); return j_def; }
+        return js;
+    }
     return j_def;
 }
 
@@ -850,37 +866,53 @@ static int sbx_sysinfo(struct sysinfo* info) {
     return r;
 }
 
-static void sbx_register_lib_hooks(Api* api, dev_t dev, ino_t ino) {
+static void sbx_register_lib_hooks(Api* api, dev_t dev, ino_t ino, bool capture_orig) {
+    void** p_open       = capture_orig ? reinterpret_cast<void**>(&orig_open)       : nullptr;
+    void** p_openat     = capture_orig ? reinterpret_cast<void**>(&orig_openat)     : nullptr;
+    void** p_fopen      = capture_orig ? reinterpret_cast<void**>(&orig_fopen)      : nullptr;
+    void** p_spget      = capture_orig ? reinterpret_cast<void**>(&orig_sysprop_get)     : nullptr;
+    void** p_spread     = capture_orig ? reinterpret_cast<void**>(&orig_sysprop_read)    : nullptr;
+    void** p_spreadcb   = capture_orig ? reinterpret_cast<void**>(&orig_sysprop_read_cb) : nullptr;
+    void** p_ioctl      = capture_orig ? reinterpret_cast<void**>(&orig_ioctl)      : nullptr;
+    void** p_getifaddrs = capture_orig ? reinterpret_cast<void**>(&orig_getifaddrs) : nullptr;
+    void** p_sysinfo    = capture_orig ? reinterpret_cast<void**>(&orig_sysinfo)    : nullptr;
+
     api->pltHookRegister(dev, ino, "__system_property_get",
-                         reinterpret_cast<void*>(sbx_sysprop_get),  reinterpret_cast<void**>(&orig_sysprop_get));
+                         reinterpret_cast<void*>(sbx_sysprop_get),  p_spget);
     api->pltHookRegister(dev, ino, "__system_property_read",
-                         reinterpret_cast<void*>(sbx_sysprop_read),  reinterpret_cast<void**>(&orig_sysprop_read));
+                         reinterpret_cast<void*>(sbx_sysprop_read),  p_spread);
     api->pltHookRegister(dev, ino, "__system_property_read_callback",
-                         reinterpret_cast<void*>(sbx_sysprop_read_cb), reinterpret_cast<void**>(&orig_sysprop_read_cb));
+                         reinterpret_cast<void*>(sbx_sysprop_read_cb), p_spreadcb);
     api->pltHookRegister(dev, ino, "open",
-                         reinterpret_cast<void*>(sbx_open),   reinterpret_cast<void**>(&orig_open));
+                         reinterpret_cast<void*>(sbx_open),   p_open);
     api->pltHookRegister(dev, ino, "openat",
-                         reinterpret_cast<void*>(sbx_openat), reinterpret_cast<void**>(&orig_openat));
+                         reinterpret_cast<void*>(sbx_openat), p_openat);
     api->pltHookRegister(dev, ino, "fopen",
-                         reinterpret_cast<void*>(sbx_fopen),  reinterpret_cast<void**>(&orig_fopen));
+                         reinterpret_cast<void*>(sbx_fopen),  p_fopen);
     api->pltHookRegister(dev, ino, "open64",
-                         reinterpret_cast<void*>(sbx_open),   reinterpret_cast<void**>(&orig_open));
+                         reinterpret_cast<void*>(sbx_open),   nullptr);
     api->pltHookRegister(dev, ino, "openat64",
-                         reinterpret_cast<void*>(sbx_openat), reinterpret_cast<void**>(&orig_openat));
+                         reinterpret_cast<void*>(sbx_openat), nullptr);
     api->pltHookRegister(dev, ino, "fopen64",
-                         reinterpret_cast<void*>(sbx_fopen),  reinterpret_cast<void**>(&orig_fopen));
+                         reinterpret_cast<void*>(sbx_fopen),  nullptr);
     api->pltHookRegister(dev, ino, "ioctl",
-                         reinterpret_cast<void*>(sbx_ioctl),  reinterpret_cast<void**>(&orig_ioctl));
+                         reinterpret_cast<void*>(sbx_ioctl),  p_ioctl);
     api->pltHookRegister(dev, ino, "getifaddrs",
-                         reinterpret_cast<void*>(sbx_getifaddrs), reinterpret_cast<void**>(&orig_getifaddrs));
+                         reinterpret_cast<void*>(sbx_getifaddrs), p_getifaddrs);
     api->pltHookRegister(dev, ino, "sysinfo",
-                         reinterpret_cast<void*>(sbx_sysinfo), reinterpret_cast<void**>(&orig_sysinfo));
+                         reinterpret_cast<void*>(sbx_sysinfo), p_sysinfo);
 }
 
 static int sbx_register_across_libs(Api* api) {
     FILE* f = fopen("/proc/self/maps", "re");
     if (!f) return 0;
-    std::vector<std::pair<dev_t, ino_t>> seen;
+    struct DevInoHash {
+        size_t operator()(const std::pair<dev_t, ino_t>& p) const {
+            return std::hash<uint64_t>()(((uint64_t)p.first << 32) | (uint64_t)p.second);
+        }
+    };
+    std::unordered_set<std::pair<dev_t, ino_t>, DevInoHash> seen;
+    bool first = true;
     char*  line = nullptr;
     size_t cap  = 0;
     ssize_t n;
@@ -891,14 +923,18 @@ static int sbx_register_across_libs(Api* api) {
         if (pl && path[pl - 1] == '\n') path[--pl] = '\0';
         if (pl < 3 || strcmp(path + pl - 3, ".so") != 0) continue;
         if (strstr(path, "sandboxid")) continue;
-        struct stat st;
-        if (stat(path, &st) != 0) continue;
-        bool dup = false;
-        for (const auto& p : seen)
-            if (p.first == st.st_dev && p.second == st.st_ino) { dup = true; break; }
-        if (dup) continue;
-        seen.push_back(std::make_pair(st.st_dev, st.st_ino));
-        sbx_register_lib_hooks(api, st.st_dev, st.st_ino);
+
+        unsigned dev_major = 0, dev_minor = 0;
+        unsigned long ino_val = 0;
+        char* p = line;
+        for (int skip = 0; skip < 3 && *p; ++p)
+            if (*p == ' ') ++skip;
+        if (sscanf(p, "%x:%x %lu", &dev_major, &dev_minor, &ino_val) != 3) continue;
+        dev_t dev = makedev(dev_major, dev_minor);
+        ino_t ino = (ino_t)ino_val;
+        if (!seen.insert(std::make_pair(dev, ino)).second) continue;
+        sbx_register_lib_hooks(api, dev, ino, first);
+        first = false;
     }
     free(line);
     fclose(f);
@@ -1023,7 +1059,8 @@ static void sbx_signal_handler(int sig, siginfo_t* info, void* ctx) {
     if (n <= CRASH_LIMIT && g_crash_pipe[1] >= 0) {
 
         int saved_errno = errno;
-        struct timespec ts; clock_gettime(CLOCK_MONOTONIC, &ts);
+        struct timespec ts;
+        syscall(__NR_clock_gettime, CLOCK_MONOTONIC, &ts);
         SbxCrashRec rec;
         rec.magic    = SBX_CRASH_MAGIC;
         rec.sig      = sig;
@@ -1048,6 +1085,10 @@ static void sbx_signal_handler(int sig, siginfo_t* info, void* ctx) {
         } else {
 
             signal(sig, SIG_DFL);
+            sigset_t ss;
+            sigemptyset(&ss);
+            sigaddset(&ss, sig);
+            sigprocmask(SIG_UNBLOCK, &ss, nullptr);
             raise(sig);
         }
     }
@@ -1328,6 +1369,7 @@ public:
         if (!active_) return;
 
         parse_blob();
+        std::atomic_thread_fence(std::memory_order_release);
         LOGD("parse_blob: %zu identity keys", g_identity.size());
         rotate_sim_operator();
 
@@ -1401,30 +1443,29 @@ private:
     }
 
     void parse_blob() {
-        std::string s(blob_.begin(), blob_.end());
-        std::istringstream iss(s);
-        std::string line;
-        while (std::getline(iss, line)) {
-            if (line.empty() || line[0] == '#') continue;
-            auto eq = line.find('=');
-            if (eq == std::string::npos) continue;
-            std::string k = line.substr(0, eq);
-            std::string v = line.substr(eq + 1);
-            // Rapikan spasi di sekitar key ("KEY = val" -> "KEY") agar cocok
-            // dengan lookup val()/prop_to_identity_map; tanpa ini key "KEY "
-            // tak pernah match dan spoof-nya diam-diam terlewat.
-            while (!k.empty() && (k.back()==' ' || k.back()=='\t' || k.back()=='\r'))
-                k.pop_back();
-            size_t ks = 0;
-            while (ks < k.size() && (k[ks]==' ' || k[ks]=='\t')) ++ks;
-            if (ks) k.erase(0, ks);
-            // symmetric trim of value (mirror the key handling)
+        const char* ptr = reinterpret_cast<const char*>(blob_.data());
+        const char* end = ptr + blob_.size();
+        while (ptr < end) {
+            const char* nl = static_cast<const char*>(memchr(ptr, '\n', end - ptr));
+            if (!nl) nl = end;
+            size_t len = nl - ptr;
+            if (len > 0 && ptr[len - 1] == '\r') --len;
+            if (len == 0 || ptr[0] == '#') { ptr = nl + 1; continue; }
+            const char* eq = static_cast<const char*>(memchr(ptr, '=', len));
+            if (!eq) { ptr = nl + 1; continue; }
+            size_t kend = eq - ptr;
+            while (kend > 0 && (ptr[kend-1] == ' ' || ptr[kend-1] == '\t')) --kend;
+            size_t kstart = 0;
+            while (kstart < kend && (ptr[kstart] == ' ' || ptr[kstart] == '\t')) ++kstart;
+            if (kstart >= kend) { ptr = nl + 1; continue; }
+            const char* vptr = eq + 1;
+            size_t vlen = len - (vptr - ptr);
             size_t vs = 0;
-            while (vs < v.size() && (v[vs]==' ' || v[vs]=='\t')) ++vs;
-            if (vs) v.erase(0, vs);
-            while (!v.empty() && (v.back()=='\r' || v.back()=='\n' || v.back()==' '))
-                v.pop_back();
-            if (!k.empty()) g_identity[k] = v;
+            while (vs < vlen && (vptr[vs] == ' ' || vptr[vs] == '\t')) ++vs;
+            size_t ve = vlen;
+            while (ve > vs && (vptr[ve-1] == ' ' || vptr[ve-1] == '\r' || vptr[ve-1] == '\n')) --ve;
+            g_identity[std::string(ptr + kstart, kend - kstart)] = std::string(vptr + vs, ve - vs);
+            ptr = nl + 1;
         }
     }
 };

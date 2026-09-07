@@ -26,14 +26,25 @@ function setBrand(brand) {
   else root.removeProperty('--brand');
 }
 
-function exec(cmd) {
+function exec(cmd, timeoutMs) {
+  const limit = typeof timeoutMs === 'number' && timeoutMs > 0 ? timeoutMs : 30000;
   return new Promise((resolve, reject) => {
     if (typeof ksu === 'undefined' || !ksu.exec) {
       reject(new Error('root bridge tidak tersedia'));
       return;
     }
     const cbName = `__ksucb_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    let settled = false;
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      try { delete window[cbName]; } catch (_) { window[cbName] = undefined; }
+      reject(Object.assign(new Error(`timeout setelah ${limit}ms`), { code: -1, stdout: '', stderr: '' }));
+    }, limit);
     window[cbName] = function (errno, stdout, stderr) {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
       try { delete window[cbName]; } catch (e) { window[cbName] = undefined; }
       const code = Number(errno);
       const out = String(stdout || '');
@@ -48,6 +59,9 @@ function exec(cmd) {
     try {
       ksu.exec(cmd, '{}', cbName);
     } catch (e) {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
       try { delete window[cbName]; } catch (_) {}
       reject(e);
     }
